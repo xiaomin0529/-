@@ -171,8 +171,44 @@
 			static topDisplay(同上)
 		}
 		
+		
 	4. 功能具体的DAO逻辑设计好
+		这里是指通用的CRUD的功能.
+		FMDB只提供open,executeUpdate(), executeQuery->
+			FMResultSet +rs.next,rs.columnCount,rs.columnNameForIndex(),rs.string/int/double/ForColumnIndex()等.
+		主要进行查询后返回值的封装	
+		1. 封装openDb,路径是沙箱目录下一个名字
+		2. update, 成功和失败
+		3. 查询, 分别对某action建立对应service,里面放对应的Dao方法.
+		http://www.cnblogs.com/kenshincui/p/4077833.html#autoid-4-0-0
+
+		另外还有KVO 监听属性变化后对应DAO.
 		
 
 		
-3. 
+
+-------------  日期处理 ----------
+NSDate, 表示绝对的时间点, 不可改变
+NSDateComponents, 封装了具体年月日,时分秒,周,季等
+NSCalendar		提供了大部分的日期计算接口, 且允许在NSDate, NSDateComponents间相互转化.
+
+
+
+
+需求1: 设定计划后, 已过去时间百分比
+	NSDate *beginDate = format
+	NSDate *targetDate = format
+	NSDate *currentDate = [NSDate date]
+	
+	NSDateComponents *fullInterval = [calendar components:NSCalendarUnitMinute 
+				fromDate:beginDate toDate:targetDate options:0]
+	NSDateComponents *passedInterval = [calendar components:NSCalendarUnitMinute 
+				fromDate:beginDate toDate:currentDate options:0]
+	
+	double rate = passedInterval.minute / fullInterval.minute 
+
+	if (rate > 1) {
+		超时未完成==失败
+	}
+	
+	
