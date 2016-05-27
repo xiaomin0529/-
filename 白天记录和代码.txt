@@ -1,0 +1,178 @@
+ 
+ 
+ =================== 小项目 helloXiaomin 相关 ===================
+1. Dao设计好.
+	1. 使用FMDB进行DAO操作; 
+	2. 设计好表结构与表之间关系; 
+	3. Entities创建, 与各表关联(若表结构变了, 则Entity也要跟着变)
+	4. 功能具体的DAO逻辑设计好.
+	
+	
+2. 日期(暂时的短板, 要实践与查知识)
+	1. 日期格式化
+	2. Calendar与Date的联动, 加减日期, 传入/返回Date
+	3. 取Calendar各种attributes, 各种情况的属性; 如当月第一天周几等.
+	
+	
+3. 本地提醒
+	这个应该好加. 
+	根据新建/修改的计划时间, 在时间快到前进行提醒(这个应有算法,如比例,如相近的整数点时间等)
+	
+	
+4. 
+
+
+------------1. DAO设计好 ----------------------------------------------
+
+1. 使用FMDB进行DAO操作: 
+	下载地址github: https://github.com/ccgus/fmdb
+	操作呢网上查,如 http://www.jianshu.com/p/d60ee3c85d63,  http://blog.csdn.net/my_belief/article/details/48975295
+	导框架至xcode,导.h至代码, 自定义自己的DAO(若需要的话)
+	
+	
+2. 设计好表结构与表之间关系
+	日计划表: DAILY_PLANS
+		周计划表: WEEKLY_PLANS
+		月计划表: MONTHLY_PLANS
+		季计划表: SEASONAL_PLANS
+		年计划表: YEARLY_PLANS
+			id 主键 自增长, 
+			title text 20, 			--标题(不可为空)
+			detail text 200,		--详细
+			state int enum			----- (任务状态,见上面,可多选)
+			topic_img text 20 		-----(主题图片,可为空or加默认), 
+			level int 	---- 重要程度 
+			begin_time time			----(开始时间now,新建时间不可修改. 要改时间是route.update_time)
+			target_time  time  		----(预订完成时间,默认当天22.30,其他情况再判断), 
+			completed_time	time	----(实际完成时间, 可能是几天后),
+			rate  int 3				----(完成比率 0~100%), 
+			remark  text 200 		---- (事后备注，非改状态的reason, complete后可选的备注), 
+
+		
+	计划状态更改路线表(拉链): 	STATE_ROUTE
+			id primary auto increment,	 ----只改不删
+			plan_id,   		--对应plan表中的id
+			state,  	  	--每一次更改的state
+			update_time,  	--操作时间.
+			old_time    	--原目标时间    两个时间只在'延时'时更新
+			new_time  		--新目标时间   (同时更新DAILY_PLANS的target_time)
+			reason,    		--更改理由 (开始/完成不需要) 
+			subjective   	--主观or客观原因  (0,1)
+			source    		--来源 (daily,weekly,monthly,seasonly,yearly)
+
+	
+	置顶表: TOP_DISPLAY
+			id int primary key autoincrement,
+			plan_id 		--
+			source   		--来源 (daily,weekly,monthly,seasonly,yearly)
+			top_time   		--置顶时间 (多个置顶时, 根据时间排顺序)
+
+			
+			
+2.1 表关系:
+	1. 日周月季年 都是平等独立的  (要不将之抽出来做个父类/协议, 则以后的周月等也可扩展自己特有的东西)
+	2. 日计划的增加: 
+			insert into DAILY_PLANS values() --state:新建,begin_time:Date(),
+		修改:
+		   完成:
+			update DAILY_PLANS set state='完',completed_time=Date() where id = ''
+		   撤销/失败:
+			update DAILY_PLANS set state='撤/败',reason='' where id = ''
+			insert into STATE_ROUTE values ()  --plan_id,source; state = '撤/败' ; subjective=(主观/客观)
+					update_time=Date(), reason='同上';  old/new_time不需要加,那是target.
+					
+		   延迟:
+			update DAILY_PLANS set state='延',target_time=新目标时间, reason='' where id = ''
+			insert into STATE_ROUTE values () --plan_id,source; state = '延'; subjective=(主观/客观)
+					update_time=Date(), reason='同上';  old_time=原target_time,new_time为新目标时间
+					
+		查询:
+		  UITableView查出列表:
+		   1. 查出所有状态,但排序
+			select  dp.* from DAILY_PLANS dp left join STATE_ROUTE route on dp.id = route.plan_id  and top.source='日计划'
+			order by dp.state,route.update_time desc,dp.begin_time  limit 0,100
+			--按新建,延迟,失败,完成,撤销排序state, 新建与完成无update_time,就按新建时间排序.
+			--取100条sqlite:  xxx  limit 0,20;
+			
+		   2. 可选点击了关闭已撤销完成的(失败的)
+		   select  dp.* from DAILY_PLANS dp left join STATE_ROUTE route on dp.id = route.plan_id and top.source='日计划'
+			where dp.state in (新/延)
+			order by dp.state,route.update_time desc,dp.begin_time  limit 0,100
+		   
+		   3. 查询加置顶:
+		   select  dp.* from DAILY_PLANS dp left join STATE_ROUTE route on dp.id = route.plan_id and top.source='日计划'
+		   left join TOP_DISPLAY top on dp.id = top.plan_id and top.source='日计划'
+			order by top.top_time desc, dp.state,route.update_time desc ,dp.begin_time  limit 0,100
+			
+			
+	3. Entities创建
+		class DailyPlans:NSObject{		--见上面, plans抽出来作父类/协议, 实现类暂时不加属性, 以后需要再override
+			 weak var id:Int			//这几个非空
+			 weak var title:String		//
+			 weak var detail:String?
+			 weak var state:Int			//
+			 weak var topicImg:String?
+			 weak var level:Int = 1		//非空有默认值:普通级别
+			 weak var beginTime:Date? = Date()
+			 weak var targetTime:Date?
+			 weak var completedTime:Date?
+			 weak var rate:Int?
+			 weak var remark:String?
+			 
+			 init(id:Int,title:String,detail:String?,...) {
+				self.id = id
+				self.title = title 
+				self.detail = detail
+				...
+			 }
+			 init(value:Dictionary?){
+				self.setValuesForKeysWithDictionary:value
+			 }
+			 static dailyPlans(id:Int,title:String,...) ->DailyPlans {
+				DailyPlans dp = DailyPlans(id:id,title:title....)
+				return dp
+			 }
+		}
+		
+		class StateRoute:NSObject{
+			weak var id:Int 
+			weak var planId:Int 
+			weak var state:Int?
+			weak var updateTime:Date? = Date()
+			weak var oldTime:Date?
+			weak var newTime:Date?
+			weak var reason:String?
+			weak var isSubjective:BOOL? = false
+			weak var source:Int? = enum.daily
+			init(id:Int,planId:Int,state:Int?,updateTime:Date...){
+				self.id = id 
+				self.planId = planId
+				self.state = state
+				...
+			}
+			init(value:Dictionary) {
+				self.setValuesForKeysWithDictionary:value
+			}
+			static stateRoute(id:Int,planId:Int,state:Int?,updateTime:Date...) -> StateRoute {
+				StateRoute sr = StateRoute(id:id,planId:planId...)
+				return sr
+			}
+		}
+			
+		class TopDisplay:NSObject{
+			weak var id:Int 
+			weak var planId:Int 
+			weak var source:String:Int? = enum.daily
+			weak var topTime:Date? = Date()
+			init(同上)
+			init(value:Dictionary){
+				同上
+			}
+			static topDisplay(同上)
+		}
+		
+	4. 功能具体的DAO逻辑设计好
+		
+
+		
+3. 
