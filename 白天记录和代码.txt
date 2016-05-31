@@ -5,6 +5,7 @@
 	1. 使用FMDB进行DAO操作; 
 	2. 设计好表结构与表之间关系; 
 	3. Entities创建, 与各表关联(若表结构变了, 则Entity也要跟着变)
+		追加: 不用Coredata不用bean, 每次拆装很麻烦,实际也不用的.
 	4. 功能具体的DAO逻辑设计好.
 	
 	
@@ -32,11 +33,12 @@
 	
 2. 设计好表结构与表之间关系
 	日计划表: DAILY_PLANS
-		周计划表: WEEKLY_PLANS
-		月计划表: MONTHLY_PLANS
-		季计划表: SEASONAL_PLANS
-		年计划表: YEARLY_PLANS
+		周计划表: WEEKLY_PLANS		--计划可拆分, 1.按量化比例分到每一天,每天百分比; 2.按步骤子功能拆分,哪天完成几个,最后100%.
+		月计划表: MONTHLY_PLANS		--计划可拆分,拆到周
+		季计划表: SEASONAL_PLANS	--拆分到月
+		年计划表: YEARLY_PLANS		--拆分到季or月	
 			id 主键 自增长, 
+			week_id 周计划id 		--可为空, 由周计划上拆分出来.......周/月/季等各会有对应上级id
 			title text 20, 			--标题(不可为空)
 			detail text 200,		--详细
 			state int enum			----- (任务状态,见上面,可多选)
@@ -48,6 +50,28 @@
 			rate  int 3				----(完成比率 0~100%), 
 			remark  text 200 		---- (事后备注，非改状态的reason, complete后可选的备注), 
 
+	建表语句:
+	CREATE TABLE IF NOT EXISTS DAILY_PLANS (Id integer PRIMARY KEY AUTOINCREMENT,week_id integer 
+		title text,detail text,state integer,topic_img text, level integer,
+		begin_time date,target_time date,completed_time date,rate integer,remark text)
+	
+	CREATE TABLE IF NOT EXISTS WEEKLY_PLANS (Id integer PRIMARY KEY AUTOINCREMENT,month_id integer 
+		title text,detail text,state integer,topic_img text, level integer,
+		begin_time date,target_time date,completed_time date,rate integer,remark text)
+	
+	CREATE TABLE IF NOT EXISTS MONTHLY_PLANS (Id integer PRIMARY KEY AUTOINCREMENT,season_id integer,year_id integer,
+		title text,detail text,state integer,topic_img text, level integer,
+		begin_time date,target_time date,completed_time date,rate integer,remark text)
+		
+	CREATE TABLE IF NOT EXISTS SEASONAL_PLANS (Id integer PRIMARY KEY AUTOINCREMENT,year_id integer 
+		title text,detail text,state integer,topic_img text, level integer,
+		begin_time date,target_time date,completed_time date,rate integer,remark text)
+		
+	CREATE TABLE IF NOT EXISTS YEARLY_PLANS (Id integer PRIMARY KEY AUTOINCREMENT,
+		title text,detail text,state integer,topic_img text, level integer,
+		begin_time date,target_time date,completed_time date,rate integer,remark text)
+		
+		
 		
 	计划状态更改路线表(拉链): 	STATE_ROUTE
 			id primary auto increment,	 ----只改不删
@@ -57,55 +81,77 @@
 			old_time    	--原目标时间    两个时间只在'延时'时更新
 			new_time  		--新目标时间   (同时更新DAILY_PLANS的target_time)
 			reason,    		--更改理由 (开始/完成不需要) 
-			subjective   	--主观or客观原因  (0,1)
-			source    		--来源 (daily,weekly,monthly,seasonly,yearly)
+			isSubjective   	--主观or客观原因  (0,1)
+			source    		--来源 (enum daily,weekly,monthly,seasonly,yearly)
 
+	CREATE TABLE IF NOT EXISTS STATE_ROUTE (Id integer PRIMARY KEY AUTOINCREMENT,
+		plan_id integer,state integer,update_time date,old_time date,new_time date,
+		reason text, isSubjective integer,source integer
+	)
 	
 	置顶表: TOP_DISPLAY
 			id int primary key autoincrement,
 			plan_id 		--
+			valid			--是否生效 enum
 			source   		--来源 (daily,weekly,monthly,seasonly,yearly)
-			top_time   		--置顶时间 (多个置顶时, 根据时间排顺序)
-
+			top_time   		--置顶时间 (多个置顶时, 根据时间排顺序) 即为操作时间
 			
+
+	CREATE TABLE IF NOT EXISTS TOP_DISPLAY (Id integer PRIMARY KEY AUTOINCREMENT,	
+		plan_id integer,valid integer,source integer,top_time date
+	)
+
+	
 			
 2.1 表关系:
-	1. 日周月季年 都是平等独立的  (要不将之抽出来做个父类/协议, 则以后的周月等也可扩展自己特有的东西)
-	2. 日计划的增加: 
-			insert into DAILY_PLANS values() --state:新建,begin_time:Date(),
+	1. 日周月季年 都是平等独立的. 错, 周月等计划会最终拆分成日计划.
+	2. 日计划的增加:
+			1.在日计划增加
+			insert into DAILY_PLANS (title,detail,state,topic_img,level,begin_time,target_time)
+				values(?,?,?,?,?,?,?) 	--state:新建,begin_time:Date(),
+				[title.text,detail.text,topic.src??,PlanState.New,Date(),targetDate] 
+			2.在周计划增加
+			insert into DAILY_PLANS (week_id,title,detail,state,topic_img,level,begin_time,target_time)
+				values(?,?,?,?,?,?,?,?) 	--state:新建,begin_time:Date(),
+				[title.text,detail.text,topic.src??,PlanState.New,Date(),targetDate] 
+				
+		置顶:
+			insert into TOP_DISPLAY (plan_id,valid,source,top_time) 
+				values (?,?,?,?)
+			[plan.Id,enum.Top,enum.Daily,Date()]
+			tableView.reload()
+		取消置顶:
+			update TOP_DISPLAY set valid = ? where id = ?
+			[enum.UnTop,Id]
+			tableView.reload()
+		
 		修改:
 		   完成:
-			update DAILY_PLANS set state='完',completed_time=Date() where id = ''
+			update DAILY_PLANS set state=?,completed_time=? where id = ?
+			[enum.完成,Date(),Id]					--swift中enum可以使用汉字
+			
 		   撤销/失败:
-			update DAILY_PLANS set state='撤/败',reason='' where id = ''
-			insert into STATE_ROUTE values ()  --plan_id,source; state = '撤/败' ; subjective=(主观/客观)
-					update_time=Date(), reason='同上';  old/new_time不需要加,那是target.
+			update DAILY_PLANS set state=?,reason=? where id = ?
+			[enum.撤销/失败, reason,Id]
+			insert into STATE_ROUTE (plan_id,state,update_time,reason,isSubjective,source) values (?,?,?,?,?,?)  
+				[plan.Id,enum.撤销/失败,Date(),reason,enum.主观,enum.Daily]
 					
 		   延迟:
-			update DAILY_PLANS set state='延',target_time=新目标时间, reason='' where id = ''
-			insert into STATE_ROUTE values () --plan_id,source; state = '延'; subjective=(主观/客观)
-					update_time=Date(), reason='同上';  old_time=原target_time,new_time为新目标时间
+			update DAILY_PLANS set state=?,target_time=?, reason=? where id = ?
+				[enum.延迟,newTargetDate,reason,Id]
+			insert into STATE_ROUTE (plan_id,state,update_time,old_time,new_time,reason,isSubjective,source) values (?,?,?,?,?,?,?,?)  
+				[plan.Id,enum.延迟,Date(),plan.targetTime,newTargetDate,reason,enum.主观,enum.Daily]
 					
 		查询:
-		  UITableView查出列表:
-		   1. 查出所有状态,但排序
-			select  dp.* from DAILY_PLANS dp left join STATE_ROUTE route on dp.id = route.plan_id  and top.source='日计划'
-			order by dp.state,route.update_time desc,dp.begin_time  limit 0,100
-			--按新建,延迟,失败,完成,撤销排序state, 新建与完成无update_time,就按新建时间排序.
-			--取100条sqlite:  xxx  limit 0,20;
-			
-		   2. 可选点击了关闭已撤销完成的(失败的)
-		   select  dp.* from DAILY_PLANS dp left join STATE_ROUTE route on dp.id = route.plan_id and top.source='日计划'
-			where dp.state in (新/延)
-			order by dp.state,route.update_time desc,dp.begin_time  limit 0,100
-		   
-		   3. 查询加置顶:
-		   select  dp.* from DAILY_PLANS dp left join STATE_ROUTE route on dp.id = route.plan_id and top.source='日计划'
-		   left join TOP_DISPLAY top on dp.id = top.plan_id and top.source='日计划'
+		  UITableView列表:		   
+		   1. 查询加置顶:
+		    select  dp.* from DAILY_PLANS dp left join STATE_ROUTE route on dp.id = route.plan_id and route.source='日计划'
+		    left join TOP_DISPLAY top on dp.id = top.plan_id and top.source= ?
 			order by top.top_time desc, dp.state,route.update_time desc ,dp.begin_time  limit 0,100
+		   [enum.Daily]
 			
 			
-	3. Entities创建
+	3. Entities创建 (不用CoreData不用bean, 但为了Service方法参数,好吧, 可用可不用吧.)
 		class DailyPlans:NSObject{		--见上面, plans抽出来作父类/协议, 实现类暂时不加属性, 以后需要再override
 			 weak var id:Int			//这几个非空
 			 weak var title:String		//
@@ -183,6 +229,38 @@
 		http://www.cnblogs.com/kenshincui/p/4077833.html#autoid-4-0-0
 
 		另外还有KVO 监听属性变化后对应DAO.
+		
+		class BaseDao:NSObject{
+			static private let dbName = "/helloXiaomin.db"		--数据库名常量
+			
+			let dataBase:FMDatabase			--常量未初始化,必须要在Init中完成初始化.  不能在声明时初始化, 否则每次调用此常量都会执行一次.
+			private override init(){		--试试 , 要只能调用static构方
+				super.init()
+				dataBase = {
+					let directory = NSXXX..					--取沙箱Document目录
+					let dbPath = directory.stringByAppendString(dbName) 	--在目录下创建dbName文件
+					let db = FMDatabase(dbPath)
+					return db 
+				}()
+			}
+			
+			static let sharedInstance = {		--试验: static&let常量, 会不会每次调用都会执行一遍?
+				let instance = BaseDao()		--调用一次Init, 里面初始化常量 
+				//create tables
+				return instance
+			}()
+				//上面常量,init,instance三种处理后, 对象只能static取, 不能new创建实例. dataBase只能在instance后才能取
+				如dataBase在声明时就初始化, 则以后每次调用时都会调用. 的以在init中初始化, 且init只在static构方中调用一次.
+			
+			
+			--这两方法封装太少, 不加也罢. 在各自的service里调用吧.
+			func executeUpdate(sql:String,args:[AnyObject]) {   --异常要不要抛出? 
+			}
+			func executeQuery() {	--这个FMResultSet要while取,怎么处理呢. 还是说不加base方法, 用到时候直接取dataBase对象, 在service里再while处理呢.
+			}
+		}
+		
+		
 		
 
 		
